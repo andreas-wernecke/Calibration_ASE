@@ -91,7 +91,7 @@ def L_PC(eta_traget, eta, sr, eta_target_err=1.):
     #eta_target contains ~1 times mean, emulators obviously not, I add it here but could be ignored as
     #constant with obs (derivation from one is caused by obs not in PC space)
     #I am quite sure error shoul not be constant
-    eta, sr = np.hstack((1.,eta)), np.hstack((1.,sr))
+    #eta, sr = np.hstack((1.,eta)), np.hstack((1.,sr))
     if np.shape(np.shape(eta_target_err))[0]==0: eta_target_err=np.ones_like(eta)*eta_target_err
     fs=np.exp(-(eta_traget-sr*eta)**2/(2.*eta_target_err**2))#/Z_err maybe add 1/Zerr back later
     return np.prod(np.prod(fs))
@@ -103,6 +103,23 @@ def model2obsgrid(field):
     field=field[2:, :-3].reshape([102, 5, 89, 5]).mean(axis=1).mean(axis=2)# ~500m off
     return field[19:-11,9:-26]
     
+def calc_rec_err(z, B, disc, var_disc, var_z):
+    #calculates recreation error as in https://doi.org/10.1080/01621459.2018.1514306 EQ(8)
+    #Z:Observational field (flattened), so that all mean fields are substracted 
+    #(as from emulator setup and eventually discrepancy)
+    #B basis matrix, disc discrepancy field, 
+    #var_disc: scalar variance of scale factor of disc
+    #var_Z: variance field of indpendant noise (observational error) 
+    #there is a lot to optimze numerically here!
+    ngrid=len(z)
+    covar_obs=np.identity(ngrid)
+    covar_disc = np.meshgrid(disc, disc)[0] * np.meshgrid(disc, disc)[1]
+    #lets better remove the disc mean from everything
+    W= var_z * covar_obs + var_disc * covar_disc
+    W_inv=np.linalg.inv(W)
+    v=z-B.dot(np.linalg.inv(B.T.dot(W_inv).dot(B))).dot(B.T).dot(W_inv).dot(z)
+    Rw=v.T.dot(W_inv).dot(v)
+    return Rw
 
 #%%%
 
@@ -173,9 +190,8 @@ if 0:
         #print "Simulated: " + str(ddat[year,out])
         #print gpm.rbf.lengthscale
 
+central_r=np.nonzero(np.logical_and(Vs[0]==0.5, np.logical_and(Vs[1]==0.5, Vs[2]==0.5)))[0][0]
 if fakeobs: #fake obs from central run with noise
-    central_r=np.nonzero(np.logical_and(Vs[0]==0.5, np.logical_and(Vs[1]==0.5, Vs[2]==0.5)))[0][0]
-    
     if 1:
         #GP to produce "noise"
         lengthscales=np.ones(1)*100000
@@ -222,18 +238,6 @@ if fakeobs: #fake obs from central run with noise
 #    plt.colorbar(imcs, ax=ax)
 
 
-if 0:#model discrepancy
-    #first try: min distance between (dim reduced) ensemble members and obs where obs are not "sourounded" 
-
-    dhdt_dimred=ur.dot(np.diag(sr)).dot(vr)
-    dist=dhdt_dimred.T-obs.flatten()
-    dist=dist.T
-    obs_notin_ensemble=np.logical_or(np.sum(np.sign(dist), axis=1)==np.shape(dist)[1], \
-                                     np.sum(np.sign(dist), axis=1)==-1*np.shape(dist)[1])
-    disc=np.zeros(57344)
-    disc=np.where(np.sum(np.sign(dist), axis=1)==np.shape(dist)[1], np.min(dist,axis=1), disc)
-    disc=np.where(np.sum(np.sign(dist), axis=1)==-1*np.shape(dist)[1], np.max(dist,axis=1), disc)
-    disc=np.ma.array(disc, mask=obs.mask)
 
 
 #%%%
@@ -282,7 +286,7 @@ dhdtbase=dhdt2km[19:-11,9:-26]
 xobsbase, yobsbase = -1*x_obs*1000.+x_sp, -1*y_obs*1000+y_sp
 #xbase, ybase are now = xobsbase, yobsbase
 
-if 1:
+if 0: #and some plotting
     fig, ax=plt.subplots()
     m.pcolormesh(xbase, ybase, dhdtbase, cmap='plasma', vmin=-8, vmax=0)
     cbar=plt.colorbar()
@@ -290,7 +294,7 @@ if 1:
     antt.plotlines(m, ax=ax, path='/home/dusch/home_zmaw/phd/programme/surfacetypes/')
     ax.set_xlim([3.9e6, 4.4e6])
     ax.set_ylim([2.7e6, 3.4e6])
-if 1:
+
     fig, ax=plt.subplots()
     m.pcolormesh(xobsbase, yobsbase, obs,cmap='plasma', vmin=-8, vmax=0)    
     #plt.imshow(dhdt_mean.reshape([256,224]))
@@ -325,23 +329,22 @@ if 1:#projecting
     #i.e. not perfect but imrovement
     
     sp_mask = obs.flatten().mask #spatial mask 
-    filled_obs=obs.copy()
-    filled_obs.fill_value=0.
-    filled_obs = filled_obs.filled().flatten()
-    
-    ur_obsgr=np.zeros([3888, k+1])
-    ur_obsgr[:,0]=model2obsgrid(dhdt_mean).flatten()
-    ur_obsgr[sp_mask,0]=0.
+
+        
+    ur_obsgr=np.zeros([3888, k])
+
+    #ur_obsgr[:,0]=model2obsgrid(dhdt_mean).flatten()
+    #ur_obsgr[sp_mask,0]=0.
     
     for i in range(k):
-        ur_obsgr[:,i+1]=model2obsgrid(ur[:,i]).flatten()
-        ur_obsgr[sp_mask,i+1]=0.
+        ur_obsgr[:,i]=model2obsgrid(ur[:,i]).flatten()
+        ur_obsgr[sp_mask,i]=0.
     #add discrepancy to ur_obsgr here
     linv_A = np.linalg.solve(ur_obsgr.T.dot(ur_obsgr), ur_obsgr.T)
-    target_PC = linv_A.dot(filled_obs)
+
     
-    if 1:#finding error of obs PCs by comparing all times
-        target_PCs=np.zeros([np.shape(dhdt_obs)[0], k+1])
+    if 0:#finding error of obs PCs by comparing all times
+        target_PCs=np.zeros([np.shape(dhdt_obs)[0], k])
         for i in range(np.shape(dhdt_obs)[0]):
             obs_tmp=dhdt_obs[i,:,:]
             obs_tmp.fill_value=0.
@@ -352,13 +355,43 @@ if 1:#projecting
             plt.figure()
             plt.hist(target_PCs[:,0])
         
-    print(target_PC)
+   
+if 1:#model discrepancy
+    #first try: min distance between (dim reduced) ensemble members and obs where obs are not "sourounded" 
+
+    dhdt_dimred=ur_obsgr.dot(np.diag(sr)).dot(vr)
+    dist=dhdt_dimred.T-(obs-model2obsgrid(dhdt_mean)).flatten()
+    dist=dist.T
+    obs_notin_ensemble=np.logical_or(np.sum(np.sign(dist), axis=1)==np.shape(dist)[1], \
+                                     np.sum(np.sign(dist), axis=1)==-1*np.shape(dist)[1])
+    disc=np.zeros(np.shape(dist)[0])
+    disc=np.where(np.sum(np.sign(dist), axis=1)==np.shape(dist)[1], np.min(dist,axis=1), disc)
+    disc=np.where(np.sum(np.sign(dist), axis=1)==-1*np.shape(dist)[1], np.max(dist,axis=1), disc)
+    disc=np.ma.array(disc, mask=obs.mask)
+    #disc=np.zeros(np.shape(dist)[0])
+    
+#preparing obs (removing mean fields and fill for calib)
+filled_obs=obs.copy()
+filled_obs.fill_value=0.
+filled_obs = filled_obs.flatten() - model2obsgrid(dhdt_mean).flatten() + disc  #lets better remove the mean and disc from obs
+filled_obs = filled_obs.filled()
+    
+
+if 1:#Reconstruction error
+    var_obs=np.ones_like(filled_obs)*5.
+    #field_disc=np.random.rand(ngrid)
+    var_disc=0.5
+    
+    print(calc_rec_err(filled_obs, ur_obsgr, disc=disc, var_disc=var_disc, var_z=var_obs))
+    
 if 1: #Calibration
+    target_PC = linv_A.dot(filled_obs)
+        
     sses=np.ones(k)
     for i in range(np.shape(Vs)[1]): 
         PC_cons, PC_cons_var = predictXk(PC_emus, Vs[:,i])
         #L=f_Z(dhdt_obs[-2,:,:], eta=PC_cons, v=0, dhdt_mean=dhdt_mean, ur=ur, sr=sr, disc=0, Z_err=5.)
-        L=L_PC(target_PC, PC_cons, sr, eta_target_err=target_PC_err)
+        L=L_PC(target_PC, PC_cons, sr, eta_target_err=1)
         #L=f_Z(obs, eta=PC_cons, v=0, dhdt_mean=dhdt_mean, ur=ur, sr=sr, disc=0, Z_err=5.)
         print('Run# '+str(i)+': '+str(L))
     
@@ -370,7 +403,7 @@ if 1: #Calibration
                 PC_cons, PC_cons_var = predictXk(PC_emus, np.array([v1,v2,v3]))
                 #Ls[i,j,kk]=f_Z(dhdt_obs[-2,:,:], eta=PC_cons, v=0, dhdt_mean=dhdt_mean, \
                 #  ur=ur, sr=sr, disc=0, Z_err=8.)
-                Ls[i,j,kk]=L_PC(target_PC, PC_cons, sr, eta_target_err=target_PC_err)
+                Ls[i,j,kk]=L_PC(target_PC, PC_cons, sr, eta_target_err=1)
                 #Ls[i,j,kk]=f_Z(obs, eta=PC_cons, v=0,\
                 #  dhdt_mean=dhdt_mean, ur=ur, sr=sr, disc=0, Z_err=8.)
                 #print(L)
@@ -409,11 +442,36 @@ if 1: #Calibration
 
 
 
-
-
-
-
-
-
 #%%%
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
