@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 from netCDF4 import Dataset
 
 
-def setup_emulator(sim_in, sim_out, s='none'):
+def setup_emulator(sim_in, sim_out, s='none', lscales=0.5):
     """Sets up an gaussian process emulator for a given set of n output values sim_out [n]
      for a set of input values sim_in [n x m] where m is the dimension of inputs.
     
@@ -27,6 +27,7 @@ def setup_emulator(sim_in, sim_out, s='none'):
     
     Output: A GPy Gaussian process model, the kernel/covarianze function and
     mean function.
+    lscales can be given as scalar or array length dim. Default=0.5 for all
     """
     if np.shape(sim_in)[0]!=len(sim_out):
         if np.shape(sim_in)[1]==len(sim_out):
@@ -36,7 +37,7 @@ def setup_emulator(sim_in, sim_out, s='none'):
     if np.shape(np.shape(sim_out))[0]!=2:
         sim_out=sim_out.reshape([-1,1])
     if s=='none': s=1.
-    lengthscales=np.ones(dim)*0.5
+    lengthscales=np.ones(dim)*lscales
     #gpk=GPy.kern.RBF(input_dim=dim, variance=var, lengthscale=lengthscales, ARD=True)
     #gpk=GPy.kern.Exponential(input_dim=dim, variance=var, lengthscale=lengthscales, ARD=True)
     gpk=GPy.kern.Matern52(input_dim=dim, variance=s, lengthscale=lengthscales, ARD=True)
@@ -121,11 +122,80 @@ def calc_rec_err(z, B, disc, var_disc, var_z):
     Rw=v.T.dot(W_inv).dot(v)
     return Rw
 
+def L_3d(PC_emus, target_PC, sr, eta_target_err=1, dim=5, Cone=1, bedZero=1, size=[11,11,11], plot=False):
+    #need to combine eta_target_error with PC consvar
+    Ls=np.zeros(size)
+    for i, v1 in enumerate(np.linspace(0,1,size[0])):
+        for j, v2 in enumerate(np.linspace(0,1.,size[1])):
+            for kk, v3 in enumerate(np.linspace(0.,1.,size[2])):
+                #print(np.sum(predict_PC(ur, sr, PC_emus, Vs[:,i])))    
+                if dim==3: V=np.array([v1,v2,v3])
+                elif dim==5: V=np.array([v1,v2,v3,Cone,bedZero])
+                else: print('WTF')
+                PC_cons, PC_cons_var = predictXk(PC_emus, V)
+                #Ls[i,j,kk]=f_Z(dhdt_obs[-2,:,:], eta=PC_cons, v=0, dhdt_mean=dhdt_mean, \
+                #  ur=ur, sr=sr, disc=0, Z_err=8.)
+                Ls[i,j,kk]=L_PC(target_PC, PC_cons, sr, eta_target_err=eta_target_err)
+                #Ls[i,j,kk]=f_Z(obs, eta=PC_cons, v=0,\
+                #  dhdt_mean=dhdt_mean, ur=ur, sr=sr, disc=0, Z_err=8.)
+                #print(L)
+    if plot: L_3d_plot(Ls, Cone, bedZero)
+    return Ls
+
+def L_3d_plot(Ls, Cone, bedZero, Ls_total=True):
+    if Cone==1:Cstr='C=1, '
+    elif Cone==0: Cstr='C=1/3, '
+    if bedZero==1: bedstr='Bedmap'
+    elif bedZero==0: bedstr='Modified Bed'
+
+    title='Likelihood to be optimal; ' + Cstr + bedstr
+    fig, axes=plt.subplots(nrows=2, ncols=2)
+    fig.suptitle(title, fontsize=18)
+    
+    ax=axes[0,0]
+    pcol=ax.pcolor(np.linspace(-0.05,1.05,12), np.linspace(-0.05,1.05,12),Ls.sum(axis=2).T/np.sum(Ls))
+    #ax.set_xlabel('Traction', fontsize=18)
+    ax.set_ylabel('Viscosity', fontsize=18)
+    #ax.set_title(title)
+    cbar=plt.colorbar(pcol, ax=ax)
+    #cbar.set_label('Likelyhood', fontsize=18)
+    ax.set_ylim([0,1.])
+    ax.set_xlim([0,1.])
+    #ax.set_ylim([0,1.])
+    
+    ax=axes[1,0]
+    pcol=ax.pcolor(np.linspace(-0.05,1.05,12), np.linspace(-0.05,1.05,12),Ls.sum(axis=1).T/np.sum(Ls))
+    ax.set_xlabel('Traction', fontsize=18)
+    ax.set_ylabel('Ocean Melt', fontsize=18)
+    cbar=plt.colorbar(pcol, ax=ax)
+    #cbar.set_label('Likelihood', fontsize=18)
+    ax.set_xlim([0,1.])
+    ax.set_ylim([0,1.])
+    
+    
+    ax=axes[1,1]
+    pcol=ax.pcolor(np.linspace(-0.05,1.05,12), np.linspace(-0.05,1.05,12),Ls.sum(axis=0).T/np.sum(Ls))
+    ax.set_xlabel('Viscosity', fontsize=18)
+    #ax.set_ylabel('Ocean Melt', fontsize=18)
+    cbar=plt.colorbar(pcol, ax=ax)
+    #cbar.set_label('Likelihood', fontsize=18)
+    ax.set_xlim([0,1.])
+    ax.set_ylim([0,1.])
+    
+    ax=axes[0,1]
+    ax.plot(np.linspace(0.,1.,11), Ls.sum(axis=0).sum(axis=0)/np.sum(Ls), label = 'Melt Factor')
+    ax.plot(np.linspace(0.,1.,11), Ls.sum(axis=0).sum(axis=1)/np.sum(Ls), label = 'Viscosity Factor')
+    ax.plot(np.linspace(0.,1.,11), Ls.sum(axis=1).sum(axis=1)/np.sum(Ls), label = 'Traction Factor')
+    ax.legend(loc='best')
+    
+    if Ls_total: 
+        fig.text(0.72, 0.89, 'Total L: {:.2e}'.format(np.sum(Ls)))
+        
 #%%%
 
 
-fakeobs=0
-k=10
+fakeobs=1
+k=50
 
 
 #%%%
@@ -133,15 +203,22 @@ k=10
 
 datadir= "/home/dusch/Dropbox/mypaper/"
 #datadir= "/home/andi/Dropbox/mypaper/"
-dhdt=np.load(datadir+"dhdt_centered.npy")
-dhdt_mean=np.load(datadir+"dhdt_mean.npy")
+#dhdt=np.load(datadir+"dhdt_centered.npy")
+#dhdt_mean=np.load(datadir+"dhdt_mean.npy")
+dhdt=np.load(datadir+"dhdt_centered_v001.npy")
+dhdt_mean=np.load(datadir+"dhdt_mean_v001.npy")
 #x0, y0 = np.load(datadir+"xy.npy")
 #x, y = np.meshgrid(x0, y0)
 x, y = np.load(datadir+"xy_estimate_v001.npy")
-Vs=np.load(datadir+"Vs.npy")
+Vs=np.load(datadir+"Vs_v001.npy")
+#traction
+#viscosity
+#melt rate
+#C==one
+#Bed==bedmap
 
-for i in range(np.shape(dhdt)[1]):
-    print(np.sum(dhdt_mean+dhdt[:,i]))
+#for i in range(np.shape(dhdt)[1]):
+#    print(np.sum(dhdt_mean+dhdt[:,i]))
 
 u,s,v = np.linalg.svd(dhdt, full_matrices=False)
 #dhdt=u.dot(np.diag(s)).dot(v)
@@ -190,7 +267,11 @@ if 0:
         #print "Simulated: " + str(ddat[year,out])
         #print gpm.rbf.lengthscale
 
-central_r=np.nonzero(np.logical_and(Vs[0]==0.5, np.logical_and(Vs[1]==0.5, Vs[2]==0.5)))[0][0]
+if np.shape(Vs)[0]==3:
+    central_r=np.nonzero( (Vs[0]==0.5) & (Vs[1]==0.5) & (Vs[2]==0.5) )[0][0]
+elif np.shape(Vs)[0]==5:
+    central_r=np.nonzero( (Vs[0]==0.5) & (Vs[1]==0.5) & (Vs[2]==0.5) & (Vs[3]==1) & (Vs[4] ==1) )[0][0]
+    
 if fakeobs: #fake obs from central run with noise
     if 1:
         #GP to produce "noise"
@@ -209,6 +290,7 @@ if fakeobs: #fake obs from central run with noise
     else:
         obs=np.ma.array(np.load(datadir+'fake_obs.npy'), mask=np.load(datadir+'fake_obsm.npy'))
     obs=model2obsgrid(obs+dhdt_mean.reshape([256,224]))
+    
 #if 0:#Helm eta al. DEM, not change
 #    cspath='/home/andi/Downloads/'
 #    csfn='DEM_ANT_CS_20130901.tif'#https://doi.pangaea.de/10.1594/PANGAEA.831392
@@ -283,10 +365,13 @@ xbase=xbase[19:-11,9:-26]#cut to area
 ybase=ybase[19:-11,9:-26]#cut to area
 dhdtbase=dhdt2km[19:-11,9:-26]
 
-xobsbase, yobsbase = -1*x_obs*1000.+x_sp, -1*y_obs*1000+y_sp
+if fakeobs:
+    xobsbase, yobsbase = xbase, ybase
+else:
+    xobsbase, yobsbase = -1*x_obs*1000.+x_sp, -1*y_obs*1000+y_sp
 #xbase, ybase are now = xobsbase, yobsbase
 
-if 0: #and some plotting
+if 1: #and some plotting
     fig, ax=plt.subplots()
     m.pcolormesh(xbase, ybase, dhdtbase, cmap='plasma', vmin=-8, vmax=0)
     cbar=plt.colorbar()
@@ -308,7 +393,7 @@ if 0: #and some plotting
     
     fig, ax=plt.subplots()
     #m.pcolormesh(xobsbase, yobsbase, obs-dhdtbase ,cmap='seismic', vmin=-4, vmax=4)    
-    m.pcolormesh(xobsbase, yobsbase, dhdt_obs[-2,:,:]-dhdtbase ,cmap='seismic', vmin=-4, vmax=4)   
+    m.pcolormesh(xobsbase, yobsbase, obs-dhdtbase ,cmap='seismic', vmin=-4, vmax=4)   
     #plt.imshow(dhdt_mean.reshape([256,224]))
     #plt.imshow(dhdt10km[20:-10,10:-25])
     #plt.imshow(dhdt10km[20:-10,10:-25]==0) 
@@ -342,18 +427,18 @@ if 1:#projecting
     #add discrepancy to ur_obsgr here
     linv_A = np.linalg.solve(ur_obsgr.T.dot(ur_obsgr), ur_obsgr.T)
 
-    
-    if 0:#finding error of obs PCs by comparing all times
-        target_PCs=np.zeros([np.shape(dhdt_obs)[0], k])
-        for i in range(np.shape(dhdt_obs)[0]):
-            obs_tmp=dhdt_obs[i,:,:]
-            obs_tmp.fill_value=0.
-            obs_tmp = obs_tmp.filled().flatten()
-            target_PCs[i,:]=linv_A.dot(obs_tmp)
-        target_PC_err=target_PCs.std(axis=0)
-        if 1:#plot PC of mean
-            plt.figure()
-            plt.hist(target_PCs[:,0])
+    if not fakeobs:
+        if 1:#finding error of obs PCs by comparing all times
+            target_PCs=np.zeros([np.shape(dhdt_obs)[0], k])
+            for i in range(np.shape(dhdt_obs)[0]):
+                obs_tmp=dhdt_obs[i,:,:]
+                obs_tmp.fill_value=0.
+                obs_tmp = obs_tmp.filled().flatten()
+                target_PCs[i,:]=linv_A.dot(obs_tmp)
+            target_PC_err=target_PCs.std(axis=0)
+            if 1:#plot PC of mean
+                plt.figure()
+                plt.hist(target_PCs[:,0])
         
    
 if 1:#model discrepancy
@@ -368,6 +453,7 @@ if 1:#model discrepancy
     disc=np.where(np.sum(np.sign(dist), axis=1)==np.shape(dist)[1], np.min(dist,axis=1), disc)
     disc=np.where(np.sum(np.sign(dist), axis=1)==-1*np.shape(dist)[1], np.max(dist,axis=1), disc)
     disc=np.ma.array(disc, mask=obs.mask)
+    print(disc)
     #disc=np.zeros(np.shape(dist)[0])
     
 #preparing obs (removing mean fields and fill for calib)
@@ -387,60 +473,28 @@ if 1:#Reconstruction error
 if 1: #Calibration
     target_PC = linv_A.dot(filled_obs)
         
-    sses=np.ones(k)
     for i in range(np.shape(Vs)[1]): 
         PC_cons, PC_cons_var = predictXk(PC_emus, Vs[:,i])
         #L=f_Z(dhdt_obs[-2,:,:], eta=PC_cons, v=0, dhdt_mean=dhdt_mean, ur=ur, sr=sr, disc=0, Z_err=5.)
-        L=L_PC(target_PC, PC_cons, sr, eta_target_err=1)
+        L=L_PC(target_PC, PC_cons, sr, eta_target_err=10.)
         #L=f_Z(obs, eta=PC_cons, v=0, dhdt_mean=dhdt_mean, ur=ur, sr=sr, disc=0, Z_err=5.)
         print('Run# '+str(i)+': '+str(L))
     
-    Ls=np.zeros([11,11, 11])
-    for i, v1 in enumerate(np.linspace(0,1,11)):
-        for j, v2 in enumerate(np.linspace(0,1.,11)):
-            for kk, v3 in enumerate(np.linspace(0.,1.,11)):
-                #print(np.sum(predict_PC(ur, sr, PC_emus, Vs[:,i])))    
-                PC_cons, PC_cons_var = predictXk(PC_emus, np.array([v1,v2,v3]))
-                #Ls[i,j,kk]=f_Z(dhdt_obs[-2,:,:], eta=PC_cons, v=0, dhdt_mean=dhdt_mean, \
-                #  ur=ur, sr=sr, disc=0, Z_err=8.)
-                Ls[i,j,kk]=L_PC(target_PC, PC_cons, sr, eta_target_err=1)
-                #Ls[i,j,kk]=f_Z(obs, eta=PC_cons, v=0,\
-                #  dhdt_mean=dhdt_mean, ur=ur, sr=sr, disc=0, Z_err=8.)
-                #print(L)
-        
-        
-    fig, ax=plt.subplots()
-    plt.pcolor(np.linspace(-0.05,1.05,12), np.linspace(-0.05,1.05,12),Ls.sum(axis=2).T/np.sum(Ls))
-    ax.set_xlabel('Traction', fontsize=18)
-    ax.set_ylabel('Viscosity', fontsize=18)
-    cbar=plt.colorbar()
-    cbar.set_label('Likelyhood', fontsize=18)
-    ax.set_ylim([0,1.])
-    ax.set_xlim([0,1.])
-    #ax.set_ylim([0,1.])
-    
-    fig, ax=plt.subplots()
-    plt.pcolor(np.linspace(-0.05,1.05,12), np.linspace(-0.05,1.05,12),Ls.sum(axis=1).T/np.sum(Ls))
-    ax.set_xlabel('Traction', fontsize=18)
-    ax.set_ylabel('Ocean Melt', fontsize=18)
-    cbar=plt.colorbar()
-    cbar.set_label('Likelihood', fontsize=18)
-    ax.set_xlim([0,1.])
-    ax.set_ylim([0,1.])
-    
-    
-    fig, ax=plt.subplots()
-    plt.pcolor(np.linspace(-0.05,1.05,12), np.linspace(-0.05,1.05,12),Ls.sum(axis=0).T/np.sum(Ls))
-    ax.set_xlabel('Viscosity', fontsize=18)
-    ax.set_ylabel('Ocean Melt', fontsize=18)
-    cbar=plt.colorbar()
-    cbar.set_label('Likelihood', fontsize=18)
-    ax.set_xlim([0,1.])
-    ax.set_ylim([0,1.])
 
+    print('Calculating likelihoods part 1/4')
+    Ls1=L_3d(PC_emus, target_PC, sr, Cone=1, bedZero=1, eta_target_err=10., plot=True)
+    #L_3d_plot(Ls1, Cone=1, bedZero=1)
+    print('Calculating likelihoods part 2/4')
+    Ls2=L_3d(PC_emus, target_PC, sr, Cone=1, bedZero=0, eta_target_err=10., plot=True)
+    #L_3d_plot(Ls2, Cone=1, bedZero=0)
+    print('Calculating likelihoods part 3/4')
+    Ls3=L_3d(PC_emus, target_PC, sr, Cone=0, bedZero=1, eta_target_err=10., plot=True)
+    #L_3d_plot(Ls3, Cone=0, bedZero=1)
+    print('Calculating likelihoods part 4/4')
+    Ls4=L_3d(PC_emus, target_PC, sr, Cone=0, bedZero=0, eta_target_err=10., plot=True)
+    #L_3d_plot(Ls4, Cone=0, bedZero=0)
 
-
-
+#Have to Ls to get the normalization right
 
 #%%%
 
