@@ -22,10 +22,11 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.basemap import Basemap
 
 test=0
+years=7.
 
 testdatadir = "/home/andi/BISICLES/testdata/"
 datadir = "/home/andi/BISICLES/data/"
-yeardir="ensembleB_50_decompressed/"
+yeardir="ensembleB_07_decompressed/"
 #read tab
 tabfn="parameterValues.tab"
 tabf=open(testdatadir+tabfn, 'r')
@@ -96,16 +97,16 @@ for i in goodruns:
     
     
 #convert to dhdt + Row centering
-dhdt=np.subtract(Y.T, thk_t0.flatten()).T/50.
+dhdt=np.subtract(Y.T, thk_t0.flatten()).T/years
 
 dhdt_mean_empi=dhdt.mean(axis=1)
 dhdt_var = dhdt.var(axis=1)
 dhdt_c=np.subtract(dhdt.T, dhdt_mean_empi).T
 if 1:
-    np.save("/home/andi/Dropbox/mypaper/dhdt_centered_v001.npy", dhdt_c)
-    np.save("/home/andi/Dropbox/mypaper/dhdt_mean_v001.npy", dhdt_mean_empi)
-    np.save("/home/andi/Dropbox/mypaper/Vs_v001.npy", Vs_full)
-    np.save("/home/andi/Dropbox/mypaper/xy_v001.npy", [x0, y0])
+    np.save("/home/andi/Dropbox/mypaper/dhdt_centered_{:02d}_v001.npy".format(int(years)), dhdt_c)
+    np.save("/home/andi/Dropbox/mypaper/dhdt_mean_{:02d}_v001.npy".format(int(years)), dhdt_mean_empi)
+    np.save("/home/andi/Dropbox/mypaper/Vs_{:02d}_v001.npy".format(int(years)), Vs_full)
+    np.save("/home/andi/Dropbox/mypaper/xy_{:02d}_v001.npy".format(int(years)), [x0, y0])
 
 #for i in range(10):
 #    Yc[:,i]=Y[:,i]-y_mean_empi
