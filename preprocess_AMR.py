@@ -26,7 +26,9 @@ years=7.
 
 testdatadir = "/home/andi/BISICLES/testdata/"
 datadir = "/home/andi/BISICLES/data/"
-yeardir="ensembleB_07_decompressed/"
+if years==7.: yeardir="ensembleB_07_decompressed/"
+if years==50.:yeardir="ensembleB_50_decompressed/"
+
 #read tab
 tabfn="parameterValues.tab"
 tabf=open(testdatadir+tabfn, 'r')
@@ -61,10 +63,7 @@ thkcomp = "thickness"
 #"Mesh", "levels", "patches", "Vel"
 
 #read a box of thickness data at the lowest resolution
-
 namr=len(fns)
-Vs_full=np.zeros([5, namr])#
-Y=np.zeros([57344,namr])
 
 level = 0
 order = 0 # interpolation order, 0 for piecewise constant, 1 for linear
@@ -76,10 +75,17 @@ thk_t0 = surface0-bottom0
 amrio.free(amrID)
 print datadir+yeardir+fns[0]
 
-goodruns=np.hstack([range(24), range(25,140), range(141,namr)])
-for i in goodruns:
-    print i
-    amrID = amrio.load(datadir+yeardir+fns[i])#fns0=start
+if years==50.:
+    goodruns=np.hstack([range(24), range(25,140), range(141,namr)])
+elif years==7.:
+    goodruns=range(namr)
+    
+Vs_full=np.zeros([5, len(goodruns)])#
+Y=np.zeros([57344,len(goodruns)])
+
+for i, igood in enumerate(goodruns):
+    print i, igood
+    amrID = amrio.load(datadir+yeardir+fns[igood])#fns0=start
     if thkcomp=="thickness":
         x0,y0, bottom0 = amrio.readBox2D(amrID, level, lo, hi, "Z_bottom", order)
         x0,y0, surface0 = amrio.readBox2D(amrID, level, lo, hi, "Z_surface", order)
@@ -103,10 +109,10 @@ dhdt_mean_empi=dhdt.mean(axis=1)
 dhdt_var = dhdt.var(axis=1)
 dhdt_c=np.subtract(dhdt.T, dhdt_mean_empi).T
 if 1:
-    np.save("/home/andi/Dropbox/mypaper/dhdt_centered_{:02d}_v001.npy".format(int(years)), dhdt_c)
-    np.save("/home/andi/Dropbox/mypaper/dhdt_mean_{:02d}_v001.npy".format(int(years)), dhdt_mean_empi)
-    np.save("/home/andi/Dropbox/mypaper/Vs_{:02d}_v001.npy".format(int(years)), Vs_full)
-    np.save("/home/andi/Dropbox/mypaper/xy_{:02d}_v001.npy".format(int(years)), [x0, y0])
+    np.save("/home/andi/Dropbox/mypaper/dhdt_centered_{:02d}_v002.npy".format(int(years)), dhdt_c)
+    np.save("/home/andi/Dropbox/mypaper/dhdt_mean_{:02d}_v002.npy".format(int(years)), dhdt_mean_empi)
+    np.save("/home/andi/Dropbox/mypaper/Vs_{:02d}_v002.npy".format(int(years)), Vs_full)
+    np.save("/home/andi/Dropbox/mypaper/xy_{:02d}_v002.npy".format(int(years)), [x0, y0])
 
 #for i in range(10):
 #    Yc[:,i]=Y[:,i]-y_mean_empi
